@@ -3,6 +3,7 @@
 .Rproj.user/
 .Ruserdata
 .Rproj.user/*
+.DS_Store
 
 Data/
 Old Sims/
