@@ -1,0 +1,261 @@
+---
+title: 'Estimating Confidence Intervals for CATE in Target Sample: Simulation Results'
+author: "Carly Lupton Brantner"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Combining Simulation Results
+
+```{r, message=F}
+library(tidyverse)
+library(here)
+```
+
+```{r, eval=F}
+#read in all files
+files <- list.files(path=here("Data","NonNormal"), pattern=".Rdata")
+
+all_res <- target_res <- c()
+setwd("~/Library/CloudStorage/Box-Box/Home Folder cb644/Documents/Research/Carly Projects/Moderation/Predict_CATE/Data/NonNormal")
+for (i in 1:length(files)) {
+  load(file = files[i])
+  
+  #all metrics
+  all_res_ind <- results$all_res
+  all_res <- bind_rows(all_res, all_res_ind)
+  
+  #target metrics
+  target_res_ind <- results$target_res %>%
+    mutate(K = unique(all_res_ind$K),
+           n_mean = unique(all_res_ind$n_mean),
+           n_sd = unique(all_res_ind$n_sd),
+           covars_fix = unique(all_res_ind$covars_fix),
+           covars_rand = unique(all_res_ind$covars_rand),
+           lin = unique(all_res_ind$lin),
+           eps_study_m = unique(all_res_ind$eps_study_m),
+           eps_study_tau = unique(all_res_ind$eps_study_tau),
+           eps_study_inter = unique(all_res_ind$eps_study_inter),
+           distribution = unique(all_res_ind$distribution))
+  target_res <- bind_rows(target_res, target_res_ind)
+  
+  print(i)
+}
+
+#checking output
+seeds <- strsplit(files,"_") %>% map_chr(.f=function(x) x[2])
+length(unique(seeds)) == length(files) #making sure every iteration has a unique seed
+
+nrow(all_res) #to make sure every iteration ran
+nrow(target_res)/800
+saveRDS(all_res, here("Data", "all_res_nonnormal_Jul2025.RDS"))
+saveRDS(target_res, here("Data", "target_res_nonnormal_Jul2025.RDS"))
+```
+
+```{r, message=F, warning=F}
+all_res <- readRDS(here("Data", "all_res_nonnormal_Jul2025.RDS"))
+target_res <- readRDS(here("Data", "target_res_nonnormal_Jul2025.RDS"))
+
+#summarise across iterations
+target_ind <- target_res %>%
+  group_by(id, W, sex, smstat, age, age2, weight, madrs, Y, tau, method,
+           K, n_mean, n_sd, covars_fix, covars_rand, lin, eps_study_m,
+           eps_study_tau, eps_study_inter, distribution) %>%
+  summarise(n_iter = n(),
+            coverage = mean(coverage),
+            bias = mean(bias),
+            abs_bias = mean(abs_bias),
+            length = mean(length),
+            significant = mean(significant)) %>%
+  mutate(method = factor(method, levels = c("LM", "ACF", "HCF", "SBART")),
+         scenario = paste(distribution, covars_fix, covars_rand, lin, eps_study_m,
+                          eps_study_tau, eps_study_inter, sep = "_"),
+         sds = paste(eps_study_m, eps_study_tau, eps_study_inter, sep = "_"),
+         Linear = ifelse(lin == T, "Linear", "Non-Linear"),
+         sds_lab = "Non-Normal")
+```
+
+```{r}
+target_ind %>%
+  group_by(n_iter) %>%
+  summarise(scenario = unique(scenario))
+```
+
+## TARGET EVAL: Age Moderator, VARIABLE DISTRIBUTION ACROSS STUDIES
+
+### Coverage
+
+```{r, eval=F}
+target_ind %>%
+  ggplot(aes(x=method)) +
+  geom_boxplot(aes(y=coverage)) +
+  geom_hline(aes(yintercept = 0.95), linetype = "dashed") +
+  facet_grid(sds_lab ~ Linear, scales = "free") +
+  scale_y_continuous(labels = scales::percent) +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=15)) +
+  ylab("Coverage in Target Sample") +
+  xlab("")
+
+ggsave(here("Results", "NonNormal", "coverage_nonnormal_Jul2025.jpeg"))
+```
+
+```{r, eval=F}
+target_ind %>%
+  filter(Linear == "Linear") %>%
+  ggplot(aes(x=method)) +
+  geom_boxplot(aes(y=coverage)) +
+  geom_hline(aes(yintercept = 0.95), linetype = "dashed") +
+  facet_grid(Linear ~ sds_lab, scales = "free") +
+  scale_y_continuous(labels = scales::percent) +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=15)) +
+  ylab("Coverage in Target Sample") +
+  xlab("")
+
+ggsave(here("Results", "NonNormal", "coverage_nonnormal_linear_Jul2025.jpeg"))
+```
+
+```{r}
+#coverage by age - all
+target_ind %>%
+  ggplot(aes(x=age, y=coverage, color=method)) +
+  geom_smooth(se=F) +
+  geom_hline(aes(yintercept = 0.95), linetype = "dashed") +
+  scale_y_continuous(labels = scales::percent) +
+  facet_grid(sds_lab ~ Linear, scales = "free") +
+  theme(text = element_text(size=15)) +
+  xlab("Standardized Age") + ylab("Coverage in Target Sample") +
+  labs(color = "Method")
+
+ggsave(here("Results", "NonNormal", "coverage_age_nonnormal_Jul2025.jpeg"))
+```
+
+### Length
+
+```{r, eval=F, fig.height=7, fig.width=10}
+#boxplot across 100 people in target sample
+target_ind %>%
+  ggplot(aes(x=method)) +
+  geom_boxplot(aes(y=length)) +
+  facet_grid(sds_lab ~ Linear, scales = "free") +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=15)) +
+  ylab("Interval Length in Target Sample") +
+  xlab("")
+
+ggsave(here("Results", "NonNormal", "length_nonnormal_Jul2025.jpeg"))
+```
+
+```{r}
+#length by age - all
+target_ind %>%
+  ggplot(aes(x=age, y=length, color=method)) +
+  geom_smooth(se=F) +
+  facet_grid(sds_lab ~ Linear, scales = "free") + theme(text = element_text(size=15)) +
+  xlab("Standardized Age") +
+  ylab("Interval Length in Target Sample") +
+  labs(color = "Method")
+
+ggsave(here("Results", "NonNormal", "length_age_nonnormal_Jul2025.jpeg"))
+```
+
+
+### Bias
+
+### Bias
+
+```{r, fig.height=7, fig.width=10}
+target_ind %>%
+  ggplot(aes(x=method)) +
+  geom_boxplot(aes(y=abs_bias)) +
+  facet_grid(sds_lab ~ Linear, scales = "free") +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=15)) +
+  ylab("Absolute Bias in Target Sample") +
+  xlab("")
+
+ggsave(here("Results", "NonNormal", "absbias_nonnormal_Jul2025.jpeg"))
+```
+
+```{r, fig.height=7, fig.width=10}
+target_ind %>%
+  ggplot(aes(x=method)) +
+  geom_boxplot(aes(y=bias)) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  facet_grid(sds_lab ~ Linear, scales = "free") +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=15)) +
+  ylab("Bias in Target Sample") +
+  xlab("")
+
+ggsave(here("Results", "NonNormal", "bias_nonnormal_Jul2025.jpeg"))
+```
+
+```{r}
+#bias by age - all
+target_ind %>%
+  ggplot(aes(x=age, y=abs_bias, color=method)) +
+  geom_smooth(se=F) +
+  facet_grid(sds_lab ~ Linear, scales = "free") + theme(text = element_text(size=15)) +
+  xlab("Standardized Age") +
+  ylab("Absolute Bias in Target Sample") +
+  labs(color = "Method")
+
+ggsave(here("Results", "NonNormal", "absbias_age_nonnormal_Jul2025.jpeg"))
+
+#bias
+target_ind %>%
+  ggplot(aes(x=age, y=bias, color=method)) +
+  geom_smooth(se=F) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed") +
+  facet_grid(sds_lab ~ Linear, scales = "free") + theme(text = element_text(size=15)) +
+  xlab("Standardized Age") +
+  ylab("Bias in Target Sample") +
+  labs(fill = "Method")
+
+ggsave(here("Results", "NonNormal", "bias_age_nonnormal_Jul2025.jpeg"))
+```
+
+
+## TARGET EVAL: Age Moderator, Same Distribution across Trials
+
+```{r, eval=F}
+target_ind %>%
+  filter(covars_fix == "age",
+         distribution == "same") %>%
+  ggplot(aes(x=method)) +
+  geom_boxplot(aes(y=coverage)) +
+  geom_hline(aes(yintercept = 0.95), linetype = "dashed") +
+  facet_grid(Linear ~ sds_lab, scales = "free") +
+  scale_y_continuous(labels = scales::percent) +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=15)) +
+  ylab("Coverage in Target Sample") +
+  xlab("")
+
+ggsave(here("Results", "Same_Distribution", "coverage_same_Jul2025.jpeg"))
+```
+
+
+## TARGET EVAL: Age Moderator, Varying Age Distribution across Trials
+
+```{r, eval=F}
+target_ind %>%
+  filter(covars_fix == "age",
+         distribution == "varying_age") %>%
+  ggplot(aes(x=method)) +
+  geom_boxplot(aes(y=coverage)) +
+  geom_hline(aes(yintercept = 0.95), linetype = "dashed") +
+  facet_grid(Linear ~ sds_lab, scales = "free") +
+  scale_y_continuous(labels = scales::percent) +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=15)) +
+  ylab("Coverage in Target Sample") +
+  xlab("")
+
+ggsave(here("Results", "Varying_Age_Distribution", "coverage_varyingage_Jul2025.jpeg"))
+```

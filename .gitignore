@@ -1,0 +1,11 @@
+.Rhistory
+.RData
+.Rproj.user/
+.Ruserdata
+.Rproj.user/*
+
+Data/
+Old Sims/
+PredictingHTE_JRSSc/
+Real Data/
+Results/

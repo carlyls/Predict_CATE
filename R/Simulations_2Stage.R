@@ -1,0 +1,86 @@
+### Running Simulations for Methods to Estimate on OOS Individuals ###
+
+library(tidyverse)
+library(lme4)
+library(rsample)
+library(multcomp)
+library(MASS)
+library(grf)
+library(dbarts)
+library(fastDummies)
+library(here)
+
+source("R/MDD_Generation.R")
+source("R/MA_Stage1.R")
+source("R/CF_Stage1.R")
+source("R/BART_Stage1.R")
+source("R/2Stage_MA.R")
+
+# set up parameters
+K <- 10
+n_mean <- 500
+n_sd <- 0
+target_sample <- readRDS("Data/target_sample.RDS")
+target_new <- T
+
+#main simulations first
+mods <- list(list(covars_fix="age", covars_rand="age", lin=T,
+                    eps_study_m=0.05, eps_study_tau=0.05, eps_study_inter=0.05),
+               list(covars_fix="age", covars_rand="age", lin=T,
+                    eps_study_m=1, eps_study_tau=0.05, eps_study_inter=0.05),
+               list(covars_fix="age", covars_rand="age", lin=T,
+                    eps_study_m=1, eps_study_tau=0.5, eps_study_inter=0.05),
+               list(covars_fix="age", covars_rand="age", lin=T,
+                    eps_study_m=1, eps_study_tau=1, eps_study_inter=0.5),
+              # list(covars_fix=c("age", "madrs"), covars_rand=c("age", "madrs"),
+              #      lin=T, eps_study_m=0.05, eps_study_tau=0.05, eps_study_inter=c(0.05,0.05)),
+              #  list(covars_fix=c("age", "madrs"), covars_rand=c("age", "madrs"), 
+              #       lin=T, eps_study_m=1, eps_study_tau=0.5, eps_study_inter=c(0.5,0.05)),
+              list(covars_fix="age", covars_rand="age", lin=F,
+                   eps_study_m=0.05, eps_study_tau=0.05, eps_study_inter=0.05),
+               list(covars_fix="age", covars_rand="age", lin=F,
+                    eps_study_m=1, eps_study_tau=0.05, eps_study_inter=0.05),
+               list(covars_fix="age", covars_rand="age", lin=F,
+                    eps_study_m=1, eps_study_tau=0.5, eps_study_inter=0.05),
+               list(covars_fix="age", covars_rand="age", lin=F,
+                    eps_study_m=1, eps_study_tau=1, eps_study_inter=0.5))
+
+settings <- expand.grid(moderators = c(1:length(mods)),
+                        distribution = c("same"),
+                        iteration = c(1:500))
+
+#set row of settings and define parameters
+#i=as.numeric(Sys.getenv('SLURM_ARRAY_TASK_ID'))
+
+#run main function
+for (i in 1:nrow(settings)) {
+  
+  moderators <- settings$moderators[i]
+  covars_fix <- mods[[moderators]]$covars_fix
+  covars_rand <- mods[[moderators]]$covars_rand
+  eps_study_m <- mods[[moderators]]$eps_study_m
+  eps_study_tau <- mods[[moderators]]$eps_study_tau
+  eps_study_inter <- mods[[moderators]]$eps_study_inter
+  lin <- mods[[moderators]]$lin
+  
+  distribution <- settings$distribution[i]
+  iteration <- settings$iteration[i]
+  seed <- i
+  
+  set.seed(seed)
+  results <- try({compare_2stage(K=K, n_mean=n_mean, n_sd=n_sd, covars_fix=covars_fix,
+                            covars_rand=covars_rand, lin=lin, eps_study_m=eps_study_m, 
+                            eps_study_tau=eps_study_tau, eps_study_inter=eps_study_inter, 
+                            distribution=distribution, target_sample=target_sample, 
+                            target_new=target_new)},
+                 silent = T)
+  if (inherits(results, "try-error")) {
+    print(paste("Converging error on iteration", i))
+  } else{
+    save(results, file=here("Data", "Main", paste(paste("results",seed,iteration,K,n_mean,n_sd,"modset",moderators,
+                                   lin,eps_study_m,eps_study_tau,mean(eps_study_inter),distribution,sep = "_"),
+                             ".Rdata",sep="")))
+  }
+  
+}
+

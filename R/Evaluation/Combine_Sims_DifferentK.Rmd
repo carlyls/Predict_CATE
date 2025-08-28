@@ -1,0 +1,162 @@
+---
+title: 'Estimating Confidence Intervals for CATE in Target Sample: Simulation Results'
+author: "Carly Lupton Brantner"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Combining Simulation Results
+
+```{r, message=F}
+library(tidyverse)
+library(here)
+```
+
+```{r, eval=F}
+#read in all files
+files <- list.files(path=here("Data","Different K"), pattern=".Rdata")
+
+all_res <- target_res <- c()
+setwd("~/Library/CloudStorage/Box-Box/Home Folder cb644/Documents/Research/Carly Projects/Moderation/Predict_CATE/Data/Different K")
+for (i in 1:length(files)) {
+  load(file = files[i])
+  
+  #all metrics
+  all_res_ind <- results$all_res
+  all_res <- bind_rows(all_res, all_res_ind)
+  
+  #target metrics
+  target_res_ind <- results$target_res %>%
+    mutate(K = unique(all_res_ind$K),
+           n_mean = unique(all_res_ind$n_mean),
+           n_sd = unique(all_res_ind$n_sd),
+           covars_fix = unique(all_res_ind$covars_fix),
+           covars_rand = unique(all_res_ind$covars_rand),
+           lin = unique(all_res_ind$lin),
+           eps_study_m = unique(all_res_ind$eps_study_m),
+           eps_study_tau = unique(all_res_ind$eps_study_tau),
+           eps_study_inter = unique(all_res_ind$eps_study_inter),
+           distribution = unique(all_res_ind$distribution))
+  target_res <- bind_rows(target_res, target_res_ind)
+  
+  print(i)
+}
+
+#checking output
+seeds <- strsplit(files,"_") %>% map_chr(.f=function(x) x[2])
+length(unique(seeds)) == length(files) #making sure every iteration has a unique seed
+
+nrow(all_res) #to make sure every iteration ran
+nrow(target_res)/800
+saveRDS(all_res, here("Data", "all_res_k_Jul2025.RDS"))
+saveRDS(target_res, here("Data", "target_res_k_Jul2025.RDS"))
+```
+
+```{r, message=F, warning=F}
+all_res_k <- readRDS(here("Data", "all_res_k_Jul2025.RDS"))
+target_res_k <- readRDS(here("Data", "target_res_k_Jul2025.RDS"))
+
+#summarise across iterations
+target_ind_K <- target_res_k %>%
+  group_by(id, W, sex, smstat, age, age2, weight, madrs, Y, tau, method,
+           K, n_mean, n_sd, covars_fix, covars_rand, lin, eps_study_m,
+           eps_study_tau, eps_study_inter, distribution) %>%
+  summarise(n_iter = n(),
+            coverage = mean(coverage),
+            bias = mean(bias),
+            abs_bias = mean(abs_bias),
+            length = mean(length),
+            significant = mean(significant)) %>%
+  mutate(method = factor(method, levels = c("LM", "ACF", "HCF", "SBART")),
+         scenario = paste(K, distribution, covars_fix, covars_rand, lin, eps_study_m,
+                          eps_study_tau, eps_study_inter, sep = "_"),
+         sds = paste(eps_study_m, eps_study_tau, eps_study_inter, sep = "_"),
+         Linear = ifelse(lin == T, "Linear", "Non-Linear"),
+         sds_lab = factor(case_when(sds == "1_0.25_0.25" ~ "Heterogeneous Intercept",
+                                    sds == "1_0.5_0.25" ~ "Heterogeneous Main",
+                                    sds == "1_1_0.5" ~ "Heterogeneous Interaction"), 
+                          levels = c("Heterogeneous Intercept", "Heterogeneous Main", 
+                                     "Heterogeneous Interaction")))
+```
+
+```{r}
+#bring in MAIN results
+all_res_main <- readRDS(here("Data", "all_res_covardist_Jul2025.RDS"))
+target_res_main <- readRDS(here("Data", "target_res_covardist_Jul2025.RDS"))
+
+#summarise across iterations
+target_ind_main <- target_res_main %>%
+  group_by(id, W, sex, smstat, age, age2, weight, madrs, Y, tau, method,
+           K, n_mean, n_sd, covars_fix, covars_rand, lin, eps_study_m,
+           eps_study_tau, eps_study_inter, distribution) %>%
+  summarise(n_iter = n(),
+            coverage = mean(coverage),
+            bias = mean(bias),
+            abs_bias = mean(abs_bias),
+            length = mean(length),
+            significant = mean(significant)) %>%
+  mutate(method = factor(method, levels = c("LM", "ACF", "HCF", "SBART")),
+         scenario = paste(K, distribution, covars_fix, covars_rand, lin, eps_study_m,
+                          eps_study_tau, eps_study_inter, sep = "_"),
+         sds = paste(eps_study_m, eps_study_tau, eps_study_inter, sep = "_"),
+         Linear = ifelse(lin == T, "Linear", "Non-Linear"),
+         sds_lab = factor(case_when(sds == "1_0.25_0.25" ~ "Heterogeneous Intercept",
+                                    sds == "1_0.5_0.25" ~ "Heterogeneous Main",
+                                    sds == "1_1_0.5" ~ "Heterogeneous Interaction"), 
+                          levels = c("Heterogeneous Intercept", "Heterogeneous Main", 
+                                     "Heterogeneous Interaction"))) %>%
+  filter(distribution == "variable")
+
+
+#combine
+target_ind <- bind_rows(target_ind_K, target_ind_main)
+```
+
+
+```{r}
+target_ind %>%
+  group_by(n_iter) %>%
+  summarise(scenario = unique(scenario))
+```
+
+## TARGET EVAL: Age Moderator, DIFFERENT K
+
+### Coverage
+
+```{r, eval=F}
+target_ind %>%
+  filter(covars_fix == "age",
+         Linear == "Linear") %>%
+  ggplot(aes(x=method)) +
+  geom_boxplot(aes(y=coverage)) +
+  geom_hline(aes(yintercept = 0.95), linetype = "dashed") +
+  facet_grid(sds_lab ~ K, scales = "free") +
+  scale_y_continuous(labels = scales::percent) +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=15)) +
+  ylab("Coverage in Target Sample") +
+  xlab("")
+
+ggsave(here("Results", "K", "coverage_lin_K_Jul2025.jpeg"))
+```
+
+```{r, eval=F}
+#nonlinear
+target_ind %>%
+  filter(covars_fix == "age",
+         Linear == "Non-Linear") %>%
+  ggplot(aes(x=method)) +
+  geom_boxplot(aes(y=coverage)) +
+  geom_hline(aes(yintercept = 0.95), linetype = "dashed") +
+  facet_grid(sds_lab ~ K, scales = "free") +
+  scale_y_continuous(labels = scales::percent) +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=15)) +
+  ylab("Coverage in Target Sample") +
+  xlab("")
+
+ggsave(here("Results", "K", "coverage_nonlin_K_Jul2025.jpeg"))
+```

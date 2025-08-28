@@ -1,0 +1,565 @@
+---
+title: 'Estimating Confidence Intervals for CATE in Target Sample: Simulation Results'
+author: "Carly Lupton Brantner"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Combining Simulation Results
+
+```{r, message=F}
+library(tidyverse)
+library(here)
+```
+
+```{r, eval=F}
+#read in all files
+files <- list.files(path=here("Data","Main"), pattern=".Rdata")
+
+all_res <- target_res <- c()
+setwd("~/Library/CloudStorage/Box-Box/Home Folder cb644/Documents/Research/Carly Projects/Moderation/Predict_CATE/Data/Main")
+for (i in 1:length(files)) {
+  load(file = files[i])
+  
+  #all metrics
+  all_res_ind <- results$all_res
+  all_res <- bind_rows(all_res, all_res_ind)
+  
+  #target metrics
+  target_res_ind <- results$target_res %>%
+    mutate(K = unique(all_res_ind$K),
+           n_mean = unique(all_res_ind$n_mean),
+           n_sd = unique(all_res_ind$n_sd),
+           covars_fix = unique(all_res_ind$covars_fix),
+           covars_rand = unique(all_res_ind$covars_rand),
+           lin = unique(all_res_ind$lin),
+           eps_study_m = unique(all_res_ind$eps_study_m),
+           eps_study_tau = unique(all_res_ind$eps_study_tau),
+           eps_study_inter = unique(all_res_ind$eps_study_inter),
+           distribution = unique(all_res_ind$distribution))
+  target_res <- bind_rows(target_res, target_res_ind)
+  
+  print(i)
+}
+
+#checking output
+seeds <- strsplit(files,"_") %>% map_chr(.f=function(x) x[2])
+length(unique(seeds)) == length(files) #making sure every iteration has a unique seed
+
+nrow(all_res) #to make sure every iteration ran
+nrow(target_res)/800
+saveRDS(all_res, here("Data", "all_res_main_Jul2025.RDS"))
+saveRDS(target_res, here("Data", "target_res_main_Jul2025.RDS"))
+```
+
+```{r, message=F, warning=F}
+all_res <- readRDS(here("Data", "all_res_main_Jul2025.RDS"))
+target_res <- readRDS(here("Data", "target_res_main_Jul2025.RDS"))
+
+#summarise across iterations
+target_ind <- target_res %>%
+  group_by(id, W, sex, smstat, age, weight, madrs, method,
+           K, n_mean, n_sd, covars_fix, covars_rand, lin, eps_study_m,
+           eps_study_tau, eps_study_inter, distribution) %>%
+  summarise(n_iter = n(),
+            coverage = mean(coverage),
+            bias = mean(bias),
+            abs_bias = mean(abs_bias),
+            length = mean(length),
+            significant = mean(significant)) %>%
+  mutate(method = factor(method, levels = c("LM", "ACF", "HCF", "SBART")),
+         scenario = paste(covars_fix, covars_rand, lin, eps_study_m,
+                          eps_study_tau, eps_study_inter, sep = "_"),
+         sds = paste(eps_study_m, eps_study_tau, eps_study_inter, sep = "_"),
+         Linear = ifelse(lin == T, "Linear", "Non-Linear"),
+         sds_lab = factor(case_when(sds == "0.05_0.05_0.05" | sds == "0.05_0.05_0.05, 0.05" ~ "Low Heterogeneity",
+                             sds == "1_0.05_0.05" ~ "Heterogeneous Intercept",
+                             sds == "1_0.5_0.05" | sds == "1_0.5_0.5, 0.05" ~ "Heterogeneous Main",
+                             sds == "1_1_0.5" ~ "High Heterogeneity"), 
+                          levels = c("Low Heterogeneity", "Heterogeneous Intercept",
+                                     "Heterogeneous Main", "High Heterogeneity")))
+```
+
+```{r}
+target_ind %>%
+  group_by(n_iter) %>%
+  summarise(scenario = unique(scenario))
+```
+
+
+## TARGET EVAL: Age Moderator, Same Training Distribution
+
+### Coverage
+
+```{r}
+target_ind %>%
+  filter(covars_fix == "age",
+         distribution == "same") %>%
+  ggplot(aes(x=method)) +
+  geom_boxplot(aes(y=coverage)) +
+  geom_hline(aes(yintercept = 0.95), linetype = "dashed") +
+  facet_grid(Linear ~ sds_lab, scales = "free") +
+  scale_y_continuous(labels = scales::percent) +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=12)) +
+  ylab("Coverage in Target Sample") +
+  xlab("")
+
+ggsave(here("Results",  "Main", "coverage_main_Jul2025.jpeg"))
+```
+
+```{r}
+#coverage by age - all
+target_ind %>%
+  filter(covars_fix == "age",
+         distribution == "same") %>%
+  ggplot(aes(x=age, y=coverage, color=method)) +
+  geom_smooth(se=F) +
+  geom_hline(aes(yintercept = 0.95), linetype = "dashed") +
+  scale_y_continuous(labels = scales::percent) +
+  facet_grid(Linear ~ sds_lab, scales = "free") +
+  theme(text = element_text(size=15)) +
+  xlab("Standardized Age") + ylab("Coverage in Target Sample") +
+  labs(color = "Method")
+
+ggsave(here("Results", "Main", "coverage_age_main_Jul2025.jpeg"))
+```
+
+### Length
+
+```{r, fig.height=7, fig.width=10}
+#boxplot across 100 people in target sample
+target_ind %>%
+  filter(covars_fix == "age",
+         distribution == "same") %>%
+  ggplot(aes(x=method)) +
+  geom_boxplot(aes(y=length)) +
+  facet_grid(Linear ~ sds_lab, scales = "free") +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=15)) +
+  ylab("Interval Length in Target Sample") +
+  xlab("")
+
+ggsave(here("Results",  "Main", "length_main_Jul2025.jpeg"))
+```
+
+```{r}
+#length by age - all
+target_ind %>%
+  filter(covars_fix == "age",
+         distribution == "same") %>%
+  ggplot(aes(x=age, y=length, color=method)) +
+  geom_smooth(se=F) +
+  facet_grid(Linear ~ sds_lab, scales = "free") + theme(text = element_text(size=15)) +
+  xlab("Standardized Age") +
+  ylab("Interval Length in Target Sample") +
+  labs(color = "Method")
+
+ggsave(here("Results",  "Main", "length_age_main_Jul2025.jpeg"))
+
+
+#points
+target_ind %>%
+  filter(covars_fix == "age",
+         distribution == "same",
+         method %in% c("HCF", "MA", "SBART")) %>%
+  ggplot(aes(x=age, y=length, color=method)) +
+  geom_point() +
+  facet_grid(Linear ~ sds_lab, scales = "free")
+```
+
+
+### Bias
+
+```{r, fig.height=7, fig.width=10}
+target_ind %>%
+  filter(covars_fix == "age",
+         distribution == "same") %>%
+  ggplot(aes(x=method)) +
+  geom_boxplot(aes(y=abs_bias)) +
+  facet_grid(Linear ~ sds_lab, scales = "free") +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=15)) +
+  ylab("Absolute Bias in Target Sample") +
+  xlab("")
+
+ggsave(here("Results",  "Main", "absbias_main_Jul2025.jpeg"))
+```
+
+```{r, fig.height=7, fig.width=10}
+target_ind %>%
+  filter(covars_fix == "age",
+         distribution == "same") %>%
+  ggplot(aes(x=method)) +
+  geom_boxplot(aes(y=bias)) +
+  facet_grid(Linear ~ sds_lab, scales = "free") +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=15)) +
+  ylab("Bias in Target Sample") +
+  xlab("")
+
+ggsave(here("Results",  "Main", "bias_main_Jul2025.jpeg"))
+```
+
+```{r, eval=F}
+#for job talk
+target_ind %>%
+  filter(covars_fix == "age",
+         distribution == "same",
+         method %in% c("HCF", "MA", "SBART")) %>%
+  mutate(method = factor(method, levels = c("MA", "HCF", "SBART")),
+         sds_lab = factor(case_when(sds == "0.05_0.05_0.05" ~ "Low Heterogeneity",
+                             sds == "1_0.05_0.05" ~ "Heterogeneous Intercept",
+                             sds == "1_0.5_0.05" ~ "Heterogeneous Main",
+                             sds == "1_1_0.5" ~ "High Heterogeneity"), levels = c("Low Heterogeneity", "Heterogeneous Intercept", "Heterogeneous Main", "High Heterogeneity"))) %>%
+  ggplot(aes(x=method)) +
+  geom_boxplot(aes(y=abs_bias)) +
+  facet_grid(Linear ~ sds_lab, scales = "free") +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=15)) +
+  ylab("Absolute Bias in Target Sample") +
+  xlab("")
+```
+
+```{r}
+#bias by age - all
+target_ind %>%
+  filter(covars_fix == "age",
+         distribution == "same") %>%
+  ggplot(aes(x=age, y=abs_bias, color=method)) +
+  geom_smooth(se=F) +
+  facet_grid(Linear ~ sds_lab, scales = "free") + theme(text = element_text(size=15)) +
+  xlab("Standardized Age") +
+  ylab("Absolute Bias in Target Sample") +
+  labs(color = "Method")
+
+ggsave(here("Results", "Main", "absbias_age_main_Jul2025.jpeg"))
+
+#bias by age - all
+target_ind %>%
+  filter(covars_fix == "age",
+         distribution == "same") %>%
+  ggplot(aes(x=age, y=bias, color=method)) +
+  geom_smooth(se=F) +
+  facet_grid(Linear ~ sds_lab, scales = "free") + theme(text = element_text(size=15)) +
+  xlab("Standardized Age") +
+  ylab("Bias in Target Sample") +
+  labs(color = "Method")
+
+ggsave(here("Results", "Main", "bias_age_main_Jul2025.jpeg"))
+```
+
+
+## TARGET EVAL: Other Settings
+
+### Age Moderator, Varying MADRS in Training Distributions
+
+```{r, eval=F, fig.height=7, fig.width=10}
+#boxplot across 100 people in target sample
+target_ind %>%
+  filter(covars_fix == "age",
+         distribution == "varying_madrs",
+         method %in% c("ACF", "HCF", "MA", "SBART")) %>%
+  mutate(method = factor(method, levels=c("MA","ACF","HCF","SBART"))) %>%
+  ggplot(aes(x=method)) +
+  geom_boxplot(aes(y=coverage)) +
+  geom_hline(aes(yintercept = 0.95), linetype = "dashed") +
+  facet_grid(Linear ~ sds_lab, scales = "free") +
+  scale_y_continuous(labels = scales::percent) +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=15)) +
+  ylab("Coverage in Target Sample") +
+  xlab("")
+```
+
+```{r, eval=F, fig.height=7, fig.width=10}
+#average across all iterations
+target_sum %>%
+  filter(covars_fix == "age",
+         distribution == "varying_madrs",
+         method %in% c("ACF", "HCF", "MA", "MA_Inc", "SBART")) %>%
+  ggplot(aes(x=method)) +
+  geom_point(aes(y=coverage_mean)) +
+  # geom_errorbar(aes(ymin = coverage_mean - 1.96*coverage_sd,
+  #                   ymax = min(coverage_mean + 1.96*coverage_sd, 1),
+  #                   color=method)) +
+  geom_hline(aes(yintercept = 0.95), linetype = "dashed") +
+  facet_grid(Linear ~ sds) +
+  scale_y_continuous(labels = scales::percent) +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=12)) +
+  ylab("Coverage in Target Sample")
+```
+
+```{r, eval=F}
+#coverage by age - HCF
+target_ind %>%
+  filter(covars_fix == "age",
+         distribution == "varying_madrs",
+         method == "HCF") %>%
+  ggplot(aes(x=age, y=coverage)) +
+  geom_point() +
+  scale_y_continuous(labels = scales::percent) +
+  facet_grid(Linear ~ sds_lab, scales = "free") +
+  ggtitle("Results Using HCF")
+```
+
+```{r, eval=F}
+#covarage by madrs - HCF
+target_ind %>%
+  filter(covars_fix == "age",
+         distribution == "varying_madrs",
+         method == "HCF") %>%
+  ggplot(aes(x=madrs, y=coverage)) +
+  geom_point() +
+  scale_y_continuous(labels = scales::percent) +
+  facet_grid(Linear ~ sds_lab, scales = "free") +
+  ggtitle("Results Using HCF")
+```
+
+
+
+### Age Moderator, Varying Age in Training Distributions
+
+```{r,  eval=F, fig.height=7, fig.width=10}
+#boxplot across 100 people in target sample
+target_ind %>%
+  filter(covars_fix == "age",
+         distribution == "separate_age",
+         method %in% c("ACF", "HCF", "MA", "SBART")) %>%
+  mutate(method = factor(method, levels=c("MA","ACF","HCF","SBART"))) %>%
+  ggplot(aes(x=method)) +
+  geom_boxplot(aes(y=coverage)) +
+  geom_hline(aes(yintercept = 0.95), linetype = "dashed") +
+  facet_grid(Linear ~ sds_lab, scales = "free") +
+  scale_y_continuous(labels = scales::percent) +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=15)) +
+  ylab("Coverage in Target Sample") +
+  xlab("")
+```
+
+
+### Age and MADRS Moderator, Same Training Distributions
+
+```{r,  eval=F, fig.height=7, fig.width=10}
+#boxplot across 100 people in target sample
+target_ind %>%
+  filter(covars_fix == "age, madrs",
+         distribution == "same",
+         method %in% c("ACF", "HCF", "MA", "SBART")) %>%
+  ggplot(aes(x=method)) +
+  geom_boxplot(aes(y=coverage)) +
+  geom_hline(aes(yintercept = 0.95), linetype = "dashed") +
+  facet_grid(Linear ~ sds_lab, scales = "free") +
+  scale_y_continuous(labels = scales::percent) +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=15)) +
+  ylab("Coverage in Target Sample") +
+  xlab("")
+```
+
+```{r,  eval=F, fig.height=7, fig.width=10}
+#average across all iterations
+target_sum %>%
+  filter(covars_fix == "age, madrs",
+         distribution == "same",
+         method %in% c("ACF", "HCF", "MA", "MA_Inc", "SBART")) %>%
+  ggplot(aes(x=method)) +
+  geom_point(aes(y=coverage_mean)) +
+  # geom_errorbar(aes(ymin = coverage_mean - 1.96*coverage_sd,
+  #                   ymax = min(coverage_mean + 1.96*coverage_sd, 1),
+  #                   color=method)) +
+  geom_hline(aes(yintercept = 0.95), linetype = "dashed") +
+  facet_grid(Linear ~ sds) +
+  scale_y_continuous(labels = scales::percent) +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=12)) +
+  ylab("Coverage in Target Sample")
+```
+
+```{r, eval=F}
+#coverage by age - HCF
+target_ind %>%
+  filter(covars_fix == "age, madrs",
+         distribution == "same",
+         method == "HCF") %>%
+  ggplot(aes(x=age, y=coverage)) +
+  geom_point() +
+  scale_y_continuous(labels = scales::percent) +
+  facet_grid(Linear ~ sds, scales = "free") +
+  ggtitle("Results Using HCF")
+```
+
+```{r, eval=F}
+#coverage by madrs - HCF
+target_ind %>%
+  filter(covars_fix == "age, madrs",
+         distribution == "same",
+         method == "HCF") %>%
+  ggplot(aes(x=madrs, y=coverage)) +
+  geom_point() +
+  scale_y_continuous(labels = scales::percent) +
+  facet_grid(Linear ~ sds, scales = "free") +
+  ggtitle("Results Using HCF")
+```
+
+
+### Age and MADRS Moderator, Varying MADRS in Training Distributions
+
+```{r, eval=F, fig.height=7, fig.width=10}
+#boxplot across 100 people in target sample
+target_ind %>%
+  filter(covars_fix == "age, madrs",
+         distribution == "varying_madrs",
+         method %in% c("ACF", "HCF", "MA", "SBART")) %>%
+  ggplot(aes(x=method)) +
+  geom_boxplot(aes(y=coverage)) +
+  geom_hline(aes(yintercept = 0.95), linetype = "dashed") +
+  facet_grid(Linear ~ sds_lab, scales = "free") +
+  scale_y_continuous(labels = scales::percent) +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=15)) +
+  ylab("Coverage in Target Sample") +
+  xlab("")
+```
+
+
+### Age and MADRS Moderator, Separate Age in Training Distributions
+
+```{r,  eval=F, fig.height=7, fig.width=10}
+#boxplot across 100 people in target sample
+target_ind %>%
+  filter(covars_fix == "age, madrs",
+         distribution == "separate_age",
+         method %in% c("ACF", "HCF", "MA", "SBART")) %>%
+  ggplot(aes(x=method)) +
+  geom_boxplot(aes(y=coverage)) +
+  geom_hline(aes(yintercept = 0.95), linetype = "dashed") +
+  facet_grid(Linear ~ sds_lab, scales = "free") +
+  scale_y_continuous(labels = scales::percent) +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=15)) +
+  ylab("Coverage in Target Sample") +
+  xlab("")
+```
+
+
+## Results by Method
+
+For now, just using the setup where age is the fixed and random moderator, the training distributions are the same across trials, and the target distribution is the same as the training.
+
+### Meta-Analysis
+
+```{r,  eval=F, fig.height=7, fig.width=10}
+#age, same target distribution
+#mse
+all_long %>%
+  filter(Method %in% c("MA","MA_Inc"), covars_fix == "age",
+         distribution == "same",
+         grepl("mse", Metric) == T,
+         sds != "1_1_0.5") %>%
+  ggplot(aes(x=sds, y=Value)) +
+  geom_boxplot(aes(color = Method)) +
+  facet_grid(Dataset~Linear, scales = "free") +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=12)) +
+  xlab("Variability of Main, Trt, and Trt*Age Coefficients") +
+  ylab("MSE")
+#ggsave("Results/19Oct2023/MA_MSE_19Oct2023.jpeg")
+
+#coverage
+all_long %>%
+  filter(Method %in% c("MA","MA_Inc"), covars_fix == "age",
+         distribution == "same",
+         grepl("coverage", Metric) == T,
+         sds != "1_1_0.5") %>%
+  ggplot(aes(x=sds, y=Value)) +
+  geom_boxplot(aes(color = Method)) +
+  geom_hline(aes(yintercept=.95), linetype = "dashed") +
+  facet_grid(Dataset~Linear, scales = "free") +
+  scale_y_continuous(labels = scales::percent) +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=12)) +
+  xlab("Variability of Main, Trt, and Trt*Age Coefficients") +
+  ylab("CI Coverage Percent") 
+#ggsave("Results/19Oct2023/MA_Cov_19Oct2023.jpeg")
+```
+
+### Causal Forest
+
+```{r,  eval=F, fig.height=7, fig.width=10}
+#age, same target distribution
+#mse
+all_long %>%
+  filter(Method %in% c("HCF","ACF","HCF_Rand","ACF_Rand"), covars_fix == "age",
+         distribution == "same",
+         grepl("mse", Metric) == T,
+         sds != "1_1_0.5") %>%
+  ggplot(aes(x=sds, y=Value)) +
+  geom_boxplot(aes(color = Method)) +
+  facet_grid(Dataset~Linear, scales = "free") +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=12)) +
+  xlab("Variability of Main, Trt, and Trt*Age Coefficients") +
+  ylab("MSE")
+#ggsave("Results/19Oct2023/CF_MSE_19Oct2023.jpeg")
+
+#coverage
+all_long %>%
+  filter(Method %in% c("HCF","ACF","HCF_Rand","ACF_Rand"), covars_fix == "age",
+         distribution == "same",
+         grepl("coverage", Metric) == T,
+         sds != "1_1_0.5") %>%
+  ggplot(aes(x=sds, y=Value)) +
+  geom_boxplot(aes(color = Method)) +
+  geom_hline(aes(yintercept=.95), linetype = "dashed") +
+  facet_grid(Dataset~Linear, scales = "free") +
+  scale_y_continuous(labels = scales::percent) +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=12)) +
+  xlab("Variability of Main, Trt, and Trt*Age Coefficients") +
+  ylab("CI Coverage Percent") 
+#ggsave("Results/19Oct2023/CF_Cov_19Oct2023.jpeg")
+```
+
+### BART
+
+```{r,  eval=F, fig.height=7, fig.width=10}
+#age, same target distribution
+#mse
+all_long %>%
+  filter(Method %in% c("SBART","SBART_Rand"), covars_fix == "age",
+         distribution == "same",
+         grepl("mse", Metric) == T,
+         sds != "1_1_0.5") %>%
+  ggplot(aes(x=sds, y=Value)) +
+  geom_boxplot(aes(color = Method)) +
+  facet_grid(Dataset~Linear, scales = "free") +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=12)) +
+  xlab("Variability of Main, Trt, and Trt*Age Coefficients") +
+  ylab("MSE")
+#ggsave("Results/19Oct2023/BART_MSE_19Oct2023.jpeg")
+
+#coverage
+all_long %>%
+  filter(Method %in% c("SBART","SBART_Rand"), covars_fix == "age",
+         distribution == "same",
+         grepl("coverage", Metric) == T,
+         sds != "1_1_0.5") %>%
+  ggplot(aes(x=sds, y=Value)) +
+  geom_boxplot(aes(color = Method)) +
+  geom_hline(aes(yintercept=.95), linetype = "dashed") +
+  facet_grid(Dataset~Linear, scales = "free") +
+  scale_y_continuous(labels = scales::percent) +
+  theme(axis.text.x = element_text(angle=90),
+        text = element_text(size=12)) +
+  xlab("Variability of Main, Trt, and Trt*Age Coefficients") +
+  ylab("CI Coverage Percent") 
+#ggsave("Results/19Oct2023/BART_Cov_19Oct2023.jpeg")
+```
+
